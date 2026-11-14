@@ -157,7 +157,8 @@ function archLinea(a) {
   const av = a.resultado?.avisos?.length ? `<div class="small" style="color:var(--bad)">${a.resultado.avisos.map(esc).join("<br>")}</div>` : "";
   return `<div class="file-row" style="display:grid;gap:4px"><div class="spread"><span class="nm"><b>${esc(TIPO_DOC[a.tipo] || "Archivo")}</b> · ${esc(a.nombre)}</span><span class="pill ${est[1]}">${est[0]}</span></div>
   ${a.resumen ? `<div class="small muted">${esc(a.resumen)}</div>` : ""}${a.error ? `<div class="small" style="color:var(--bad)">${esc(a.error)}</div>` : ""}${av}
-  ${a.estado === "por_confirmar" || a.estado === "error" ? `<div class="row"><button class="btn sm" data-revisar-arch="${a.id}">${a.estado === "error" ? "Reintentar" : "Revisar y guardar"}</button></div>` : ""}</div>`;
+  ${a.estado === "por_confirmar" || a.estado === "error" ? `<div class="row"><button class="btn sm" data-revisar-arch="${a.id}">${a.estado === "error" ? "Reintentar" : "Revisar y guardar"}</button><button class="btn sm sec" data-descartar="${a.id}">Descartar</button></div>` : ""}
+  ${a.estado === "guardado" && esAdmin() ? (S.confirmarDeshacer === a.id ? `<div class="alert"><b>¿Deshacer este archivo?</b> Se borra todo lo que agregó (fichas, pendientes, despachos, pagos o cobros).<div class="row" style="margin-top:8px"><button class="btn sm" data-deshacer="${a.id}">Sí, deshacer</button><button class="btn sm sec" data-act="no-deshacer">No</button></div></div>` : `<div class="row"><button class="btn sm sec" data-pre-deshacer="${a.id}">Deshacer</button></div>`) : ""}</div>`;
 }
 
 function vRefs() {
@@ -348,8 +349,11 @@ async function guardarArchivo() {
       if (!ex) await must(sb.from("referencias").insert({ ...base, fecha: f.fecha_despacho || hoyISO(), cerrada: false }));
       else await must(sb.from("referencias").update({ marca: base.marca, tela: base.tela, oc: base.oc, fecha: ex.fecha || f.fecha_despacho || hoyISO(), actualizado_por: uid }).eq("ref", ref));
       const row = { ref, descripcion: f.descripcion, cortadas: Math.round(num(f.cantidad_cortada)), promedio: num(f.promedio), precio_tela: num(f.precio_tela), maquila: num(f.maquila), iva_maquila: num(f.iva_maquila), confeccion: num(f.confeccion), lavanderia: f.lavanderia, doc_lavanderia: f.doc_lavanderia, mq: f.mq, despachadas: Math.round(num(f.cantidad_despachada)), valor_total: num(f.valor_total_maquila), fecha_despacho: f.fecha_despacho || null, observaciones: f.observaciones, archivo_id: aid };
-      const prev = await must(sb.from("fichas").select("id").eq("ref", ref).eq("descripcion", f.descripcion || "").limit(1));
-      if (prev.length) await must(sb.from("fichas").update(row).eq("id", prev[0].id)); else await must(sb.from("fichas").insert(row));
+      const existentes = await must(sb.from("fichas").select("id,descripcion").eq("ref", ref));
+      const delMismoArchivo = (r.fichas || []).filter((x) => onlyRef(x.referencia) === ref).length;
+      let prev = existentes.find((x) => (x.descripcion || "") === (f.descripcion || ""));
+      if (!prev && existentes.length === 1 && delMismoArchivo === 1) prev = existentes[0];
+      if (prev) await must(sb.from("fichas").update(row).eq("id", prev.id)); else await must(sb.from("fichas").insert(row));
       if (!(await yaHay("novedades"))) {
         const novs = [["pendientes_confeccion", "pendiente_confeccion"], ["pendientes_lavanderia", "pendiente_lavanderia"], ["muestras", "muestra"], ["cobros_confeccion", "cobro_confeccion"], ["cobros_lavanderia", "cobro_lavanderia"], ["perdidas", "perdida"]]
           .filter(([k]) => num(f[k])).map(([k, tipo]) => ({ ref, tipo, cantidad: Math.round(num(f[k])), abierta: tipo.startsWith("pendiente"), nota: "Según la ficha " + a.nombre, archivo_id: aid, creado_por: uid }));
@@ -569,6 +573,16 @@ document.addEventListener("click", async (e) => {
     if (t.dataset.pf) { S.pagoFiltro = t.dataset.pf; render(); return; }
     if (t.dataset.nt) { document.querySelectorAll("[data-nt]").forEach((c) => c.setAttribute("aria-pressed", c === t)); return; }
     if (t.dataset.desp) { S.view = "caja"; await abrirDesp(t.dataset.desp); return; }
+    if (t.dataset.preDeshacer) { S.confirmarDeshacer = t.dataset.preDeshacer; render(); return; }
+    if (t.dataset.deshacer) {
+      t.disabled = true; const id = t.dataset.deshacer;
+      for (const tabla of ["novedades", "fichas", "despachos", "pagos", "compras_tela", "cobros"]) await must(sb.from(tabla).delete().eq("archivo_id", id));
+      const arch = S.archivos.find((x) => x.id === id);
+      if (arch?.tipo === "cierre") await must(sb.from("cierres").delete().eq("archivo_id", id));
+      await must(sb.from("archivos").update({ estado: "descartado" }).eq("id", id));
+      S.confirmarDeshacer = null; toast("Archivo deshecho."); await recargar(); return;
+    }
+    if (t.dataset.descartar) { t.disabled = true; await must(sb.from("archivos").update({ estado: "descartado" }).eq("id", t.dataset.descartar)); toast("Descartado."); await recargar(); return; }
     if (t.dataset.revisarArch) { abrirRevision(t.dataset.revisarArch); return; }
     if (t.dataset.resolver) { t.disabled = true; await must(sb.from("novedades").update({ abierta: false }).eq("id", t.dataset.resolver)); toast("Marcada como resuelta."); await recargar(); return; }
     if (t.dataset.clave) {
@@ -595,6 +609,7 @@ document.addEventListener("click", async (e) => {
     if (g) { if (t.dataset.f) S.filtro = t.dataset.f; if (g === "usuarios") { S.claveMostrada = null; await cargarPerfiles(); } go(g); return; }
     const a = t.dataset.act; if (!a) return;
     if (a === "menu") { S.menu = !S.menu; render(); return; }
+    if (a === "no-deshacer") { S.confirmarDeshacer = null; render(); return; }
     if (a === "salir") { await sb.auth.signOut(); location.reload(); return; }
     if (a === "instalar") { S.menu = false; render(); toast("En el celular: menú del navegador → «Agregar a pantalla de inicio»."); return; }
     t.disabled = true;
