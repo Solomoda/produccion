@@ -188,6 +188,9 @@ function vRef() {
   <div class="card sect"><h3>Producción</h3>
    <div class="grid2"><div class="f"><span>Cortadas (ficha)</span><b>${q(r.cortadas)}</b></div><div class="f"><span>Diomar dice que mandó</span><b>${q(r.mando)}</b></div>
    <div class="f ed"><span>Llegaron ✎</span><input id="lleg" type="number" inputmode="numeric" value="${r.llegaron}"></div><div class="f"><span>Faltan sin explicar</span><b style="color:${r.faltan > 0 ? "var(--bad)" : r.faltan < 0 ? "var(--warn)" : "var(--ok)"}">${q(r.faltan)}</b></div></div>
+   ${r.faltan > 0 ? `<div class="sect" style="gap:6px"><span class="small muted">¿Qué pasó con las ${q(r.faltan)} que faltan? Toque una opción y queda anotado:</span><div class="chips wrap">
+     <button class="chip" data-falta="pendiente_confeccion">Quedaron en confección</button><button class="chip" data-falta="pendiente_lavanderia">Quedaron en lavandería</button>
+     <button class="chip" data-falta="falto">Faltaron: reclamar a Diomar</button><button class="chip" data-falta="cobro_confeccion">Se le cobran al taller</button><button class="chip" data-falta="muestra">Fueron muestras</button></div></div>` : ""}
    <div class="toggle"><div><b>¿Ya llegó todo?</b><div class="small muted">Márquelo cuando llegue la última caja de esta referencia.</div></div><button class="sw" role="switch" aria-checked="${!!r.cerrada}" data-sw="cerrada" aria-label="Ya llegó todo"></button></div></div>
   <div class="card sect"><h3>Lo que no llegó ✎</h3><div class="grid2">${stepper("pendiente_confeccion", "Pendiente confección")}${stepper("pendiente_lavanderia", "Pendiente lavandería")}${stepper("muestra", "Muestras")}${stepper("cobro_confeccion", "Cobro a confección")}${stepper("cobro_lavanderia", "Cobro a lavandería")}${stepper("perdida", "Perdidas")}</div></div>
   <div class="card sect"><h3>Lo que cobra Diomar</h3><div class="grid2"><div class="f"><span>Prendas cobradas</span><b>${q(r.cobradas)}</b></div><div class="f"><span>Valor cobrado</span><b>${m(r.cobrado)}</b></div>
@@ -294,7 +297,8 @@ function vRevisar() {
        <label class="lb">Precio tela sin IVA${inp(`fichas.${i}.precio_tela`, f.precio_tela, "number")}</label>
        <label class="lb">Despachadas${inp(`fichas.${i}.cantidad_despachada`, f.cantidad_despachada, "number")}</label></div>
       ${[["pendientes_confeccion", "pendientes en confección"], ["pendientes_lavanderia", "pendientes en lavandería"], ["muestras", "muestras"], ["cobros_confeccion", "cobros a confección"], ["cobros_lavanderia", "cobros a lavandería"], ["perdidas", "perdidas"]].filter(([k]) => num(f[k])).map(([k, l]) => `<div class="small">Se anotarán <b>${q(f[k])}</b> ${l}.</div>`).join("")}
-      ${ex && ex.cortadas && ex.n_fichas ? `<div class="small muted">Ya existe una ficha de esta referencia. Si es la misma, se actualiza.</div>` : ""}</div>`;
+      ${ex && num(ex.n_fichas) ? (() => { const modo = f._modo || (onlyRef(f.orden_corte) && ex.oc && onlyRef(f.orden_corte) !== onlyRef(ex.oc) ? "sumar" : "actualizar"); f._modo = modo; return `<div class="alert w"><b>Esta referencia ya existe</b> (OC ${esc(ex.oc || "–")}, ${q(ex.cortadas)} cortadas${ex.fecha ? ", " + fecha(ex.fecha) : ""}). ¿Qué es esta ficha?
+        <div class="chips wrap" style="margin-top:8px"><button class="chip" data-modo="${i}:actualizar" aria-pressed="${modo === "actualizar"}">La misma ficha: actualizarla</button><button class="chip" data-modo="${i}:sumar" aria-pressed="${modo === "sumar"}">Otra producción: sumarla</button><button class="chip" data-modo="${i}:omitir" aria-pressed="${modo === "omitir"}">No guardar esta</button></div></div>`; })() : ""}</div>`;
     }).join("");
   } else if (["despacho", "remision_pendientes", "remision_muestras", "remision_cobro"].includes(t)) {
     const d = r.despacho || { items: [] };
@@ -322,6 +326,7 @@ function vRevisar() {
   }
   return `<button class="back" data-act="cerrar-rev">‹ Volver</button>
   <h1>${esc(TIPO_DOC[t] || "Documento")}</h1><p class="muted small">${esc(a.nombre)}</p>
+  ${S.archivos.some((x) => x.id !== a.id && x.estado === "guardado" && x.nombre === a.nombre) ? `<div class="alert"><b>Ojo:</b> un archivo con este mismo nombre ya se guardó antes. Si es el mismo, toque «Descartar».</div>` : ""}
   ${r.resumen ? `<div class="alert i">${esc(r.resumen)}</div>` : ""}
   ${r.avisos?.length ? `<div class="alert"><b>Ojo en el documento</b><br>${r.avisos.map(esc).join("<br>")}</div>` : ""}
   ${cuerpo}
@@ -343,7 +348,7 @@ async function guardarArchivo() {
   const yaHay = async (tabla) => (await must(sb.from(tabla).select("id").eq("archivo_id", aid).limit(1))).length > 0;
   if (t === "ficha") {
     for (const f of r.fichas || []) {
-      const ref = onlyRef(f.referencia); if (!ref) continue;
+      const ref = onlyRef(f.referencia); if (!ref || f._modo === "omitir") continue;
       const ex = getRef(ref);
       const base = { ref, marca: f.marca || ex?.marca || "", descripcion: ex?.descripcion || f.descripcion || "", tela: f.tela || ex?.tela || "", oc: f.orden_corte || ex?.oc || "" };
       if (!ex) await must(sb.from("referencias").insert({ ...base, fecha: f.fecha_despacho || hoyISO(), cerrada: false }));
@@ -351,8 +356,12 @@ async function guardarArchivo() {
       const row = { ref, descripcion: f.descripcion, cortadas: Math.round(num(f.cantidad_cortada)), promedio: num(f.promedio), precio_tela: num(f.precio_tela), maquila: num(f.maquila), iva_maquila: num(f.iva_maquila), confeccion: num(f.confeccion), lavanderia: f.lavanderia, doc_lavanderia: f.doc_lavanderia, mq: f.mq, despachadas: Math.round(num(f.cantidad_despachada)), valor_total: num(f.valor_total_maquila), fecha_despacho: f.fecha_despacho || null, observaciones: f.observaciones, archivo_id: aid };
       const existentes = await must(sb.from("fichas").select("id,descripcion").eq("ref", ref));
       const delMismoArchivo = (r.fichas || []).filter((x) => onlyRef(x.referencia) === ref).length;
-      let prev = existentes.find((x) => (x.descripcion || "") === (f.descripcion || ""));
-      if (!prev && existentes.length === 1 && delMismoArchivo === 1) prev = existentes[0];
+      let prev = null;
+      if (f._modo !== "sumar") {
+        prev = existentes.find((x) => (x.descripcion || "") === (f.descripcion || ""));
+        if (!prev && existentes.length === 1 && delMismoArchivo === 1) prev = existentes[0];
+      }
+      if (f._modo === "sumar" && ex) await must(sb.from("referencias").update({ cerrada: false }).eq("ref", ref));
       if (prev) await must(sb.from("fichas").update(row).eq("id", prev.id)); else await must(sb.from("fichas").insert(row));
       if (!(await yaHay("novedades"))) {
         const novs = [["pendientes_confeccion", "pendiente_confeccion"], ["pendientes_lavanderia", "pendiente_lavanderia"], ["muestras", "muestra"], ["cobros_confeccion", "cobro_confeccion"], ["cobros_lavanderia", "cobro_lavanderia"], ["perdidas", "perdida"]]
@@ -405,9 +414,9 @@ function vCaja() {
   const abiertos = S.despachos.filter((d) => !d.cerrado && d.tipo !== "cobro");
   const d = S.cajaDesp;
   if (d) {
-    return `<button class="back" data-act="caja-volver">‹ Volver</button><h1>${esc(d.documento)}</h1><p class="muted small">${fecha(d.fecha)} · Escriba lo que contó de cada referencia. Si llegó todo lo que dice Diomar, toque «Llegó completo».</p>
+    return `<button class="back" data-act="caja-volver">‹ Volver</button><h1>${esc(d.documento)}</h1><p class="muted small">${fecha(d.fecha)} · Escriba lo que contó de cada referencia. Si llegó todo lo que dice Diomar, toque «Llegó completo».${esOficina() ? " Si la orden de Diomar tiene un número equivocado, corríjalo en «Diomar dice»." : ""}</p>
     <div class="card"><div class="tbl"><table><thead><tr><th>Ref</th><th class="n">Diomar dice</th><th class="n">Ya llegaron</th><th class="n">Contó ahora</th></tr></thead><tbody>
-    ${d.despacho_items.map((it, i) => { const ya = llegadoDesp(d.id, it.ref); return `<tr><td><b>${esc(it.ref)}</b><div class="small muted">${esc(getRef(it.ref)?.descripcion || it.descripcion || "")}</div></td><td class="n">${q(it.cantidad)}</td><td class="n">${q(ya)}</td><td class="n"><input id="cj-${i}" type="number" inputmode="numeric" placeholder="0"></td></tr>`; }).join("")}
+    ${d.despacho_items.map((it, i) => { const ya = llegadoDesp(d.id, it.ref); return `<tr><td><b>${esc(it.ref)}</b><div class="small muted">${esc(getRef(it.ref)?.descripcion || it.descripcion || "")}</div></td><td class="n">${esOficina() ? `<input data-item="${it.id}" type="number" value="${it.cantidad}" aria-label="Corregir lo que dice Diomar">` : q(it.cantidad)}</td><td class="n">${q(ya)}</td><td class="n"><input id="cj-${i}" type="number" inputmode="numeric" placeholder="0"></td></tr>`; }).join("")}
     </tbody></table></div></div>
     <div class="row"><button class="btn" data-act="caja-guardar" style="flex:1">Guardar lo contado</button><button class="btn sec" data-act="caja-completo" style="flex:1">Llegó completo</button></div>
     ${esOficina() ? '<button class="btn sec" data-act="cerrar-desp">Ya llegaron todas las cajas de esta orden</button>' : ""}`;
@@ -573,6 +582,12 @@ document.addEventListener("click", async (e) => {
     if (t.dataset.pf) { S.pagoFiltro = t.dataset.pf; render(); return; }
     if (t.dataset.nt) { document.querySelectorAll("[data-nt]").forEach((c) => c.setAttribute("aria-pressed", c === t)); return; }
     if (t.dataset.desp) { S.view = "caja"; await abrirDesp(t.dataset.desp); return; }
+    if (t.dataset.falta) {
+      const tipo = t.dataset.falta, c = S.ref.faltan; if (c <= 0) return; t.disabled = true;
+      await must(sb.from("novedades").insert({ ref: S.ref.ref, tipo, cantidad: c, abierta: ["pendiente_confeccion", "pendiente_lavanderia", "falto"].includes(tipo), nota: "Anotado desde la referencia", creado_por: S.session.user.id }));
+      toast(`Anotado: ${q(c)} ${TIPO_NOV[tipo].toLowerCase()}.`); await cargar(); cargarDetalle(S.ref.ref); return;
+    }
+    if (t.dataset.modo) { const [i, modo] = t.dataset.modo.split(":"); S.revisando.resultado.fichas[+i]._modo = modo; render(); return; }
     if (t.dataset.preDeshacer) { S.confirmarDeshacer = t.dataset.preDeshacer; render(); return; }
     if (t.dataset.deshacer) {
       t.disabled = true; const id = t.dataset.deshacer;
@@ -670,6 +685,11 @@ document.addEventListener("change", async (e) => {
       S.ref.llegaron = nuevo; calc(S.ref); render(); toast(`Corregido: ${dif > 0 ? "+" : ""}${dif}`); cargarDetalle(S.ref.ref); return;
     }
     if (e.target.id === "precio") { const v = num(e.target.value) || null; await must(sb.from("referencias").update({ precio_venta: v, actualizado_por: S.session.user.id }).eq("ref", S.ref.ref)); S.ref.precio_venta = v; calc(S.ref); render(); toast("Precio guardado."); return; }
+    if (e.target.dataset.item) {
+      const v = Math.round(num(e.target.value)); await must(sb.from("despacho_items").update({ cantidad: v }).eq("id", e.target.dataset.item));
+      const it = S.cajaDesp?.despacho_items.find((x) => x.id === e.target.dataset.item); if (it) it.cantidad = v;
+      toast("Cantidad del despacho corregida."); cargar(); return;
+    }
     if (e.target.dataset.rol) { await must(sb.from("perfiles").update({ rol: e.target.value }).eq("id", e.target.dataset.rol)); toast("Acceso cambiado."); await cargarPerfiles(); return; }
     if (e.target.dataset.tela) { await must(sb.from("telas").update({ inventario_inicial: num(e.target.value) }).eq("nombre", e.target.dataset.tela)); S.telas.find((t) => t.nombre === e.target.dataset.tela).inventario_inicial = num(e.target.value); render(); return; }
   } catch (err) { toast("Error: " + (err.message || err)); }
