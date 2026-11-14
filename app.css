@@ -114,3 +114,5 @@ td input{width:80px;font:inherit;padding:6px;border-radius:8px;border:1px solid 
 .file-row .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px}
 .empty{padding:20px;text-align:center;color:var(--muted)}
 button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,.item:focus-visible{outline:2px solid var(--amarillo);outline-offset:2px}
+
+.file-row,.file-row div,.alert{overflow-wrap:anywhere;min-width:0}
