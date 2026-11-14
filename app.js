@@ -123,7 +123,7 @@ function item(r) {
 
 function vLogin() {
   if (S.recovery) {
-    return `<div class="login"><form class="card" id="f-pass"><img src="logo.png" alt="Solo Moda"><h1 style="text-align:center">Cree su contraseña</h1>
+    return `<div class="login"><form class="card" id="f-pass"><img src="logo.png" alt="Solo Moda"><h1 style="text-align:center">Cree su contraseña</h1><p class="small muted" style="text-align:center">Es su primera vez o le dieron una contraseña temporal. Escoja una propia.</p>
     <label class="lb">Contraseña nueva (mínimo 8 caracteres)<input id="p1" class="inp" type="password" autocomplete="new-password" minlength="8" required></label>
     <label class="lb">Repita la contraseña<input id="p2" class="inp" type="password" autocomplete="new-password" minlength="8" required></label>
     <button class="btn" type="submit">Guardar y entrar</button></form></div>`;
@@ -515,15 +515,19 @@ function vPagoManual() {
 }
 
 /* ---------- usuarios y telas ---------- */
+function claveTemporal() { const a = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"; let r = ""; const v = crypto.getRandomValues(new Uint32Array(10)); for (const x of v) r += a[x % a.length]; return r; }
 function vUsuarios() {
+  const nueva = S.claveMostrada;
   return `<button class="back" data-go="inicio">‹ Inicio</button><h1>Usuarios</h1>
-  <div class="card sect"><h3>Invitar a alguien</h3>
-  <label class="lb">Nombre<input id="us-nom" class="inp"></label><label class="lb">Correo<input id="us-mail" class="inp" type="email"></label>
+  ${nueva ? `<div class="alert o"><b>Listo.</b> Mándele esto a ${esc(nueva.nombre)} por WhatsApp:<br><br>Entre a https://solomoda.github.io/produccion/<br>Correo: ${esc(nueva.email)}<br>Contraseña temporal: <b style="font-size:17px;letter-spacing:.05em">${esc(nueva.clave)}</b><br><br>La primera vez la app le pide escoger su propia contraseña.</div><button class="btn sec" data-act="copiar-clave">Copiar mensaje</button>` : ""}
+  <div class="card sect"><h3>Dar acceso a alguien</h3>
+  <label class="lb">Nombre<input id="us-nom" class="inp"></label><label class="lb">Correo<input id="us-mail" class="inp" type="email" autocomplete="off"></label>
   <label class="lb">Acceso<select id="us-rol" class="inp"><option value="almacen">Almacén: registra cajas y novedades</option><option value="oficina">Oficina: además sube archivos, pagos y cierres</option><option value="admin">Administrador: todo, incluso usuarios</option></select></label>
-  <button class="btn" data-act="invitar">Enviar invitación</button><p class="small muted">Le llega un correo para crear su contraseña.</p></div>
-  <div class="card sect"><h3>Personas con acceso</h3>${S.perfiles.map((p) => `<div class="file-row"><span class="nm"><b>${esc(p.nombre)}</b><br><span class="small muted">${esc(p.email)}</span></span>
+  <button class="btn" data-act="invitar">Crear acceso</button><p class="small muted">Se crea una contraseña temporal para que se la mande por WhatsApp. No se envían correos.</p></div>
+  <div class="card sect"><h3>Personas con acceso</h3>${S.perfiles.map((p) => `<div class="file-row" style="flex-wrap:wrap"><span class="nm" style="flex:1 1 160px"><b>${esc(p.nombre)}</b><br><span class="small muted">${esc(p.email)}</span></span>
   <select class="inp" data-rol="${p.id}" style="width:auto">${["admin", "oficina", "almacen"].map((r) => `<option value="${r}" ${p.rol === r ? "selected" : ""}>${{ admin: "Admin", oficina: "Oficina", almacen: "Almacén" }[r]}</option>`).join("")}</select>
-  <button class="btn sm sec" data-activo="${p.id}">${p.activo ? "Quitar acceso" : "Dar acceso"}</button></div>`).join("")}</div>`;
+  <button class="btn sm sec" data-clave="${p.id}">Contraseña nueva</button>
+  ${p.id !== S.session.user.id ? `<button class="btn sm sec" data-activo="${p.id}">${p.activo ? "Quitar acceso" : "Dar acceso"}</button>` : ""}</div>`).join("")}</div>`;
 }
 function vTelas() {
   const cons = {};
@@ -567,6 +571,12 @@ document.addEventListener("click", async (e) => {
     if (t.dataset.desp) { S.view = "caja"; await abrirDesp(t.dataset.desp); return; }
     if (t.dataset.revisarArch) { abrirRevision(t.dataset.revisarArch); return; }
     if (t.dataset.resolver) { t.disabled = true; await must(sb.from("novedades").update({ abierta: false }).eq("id", t.dataset.resolver)); toast("Marcada como resuelta."); await recargar(); return; }
+    if (t.dataset.clave) {
+      const p = S.perfiles.find((x) => x.id === t.dataset.clave), clave = claveTemporal(); t.disabled = true;
+      const { data, error } = await sb.functions.invoke("usuarios", { body: { accion: "clave", id: p.id, password: clave } });
+      if (error || data?.error) { let msg = data?.error || error.message; try { msg = (await error.context.json()).error || msg; } catch (_) {} toast("No se pudo: " + msg); t.disabled = false; return; }
+      S.claveMostrada = { nombre: p.nombre, email: p.email, clave }; render(); window.scrollTo(0, 0); return;
+    }
     if (t.dataset.activo) { const p = S.perfiles.find((x) => x.id === t.dataset.activo); await must(sb.from("perfiles").update({ activo: !p.activo }).eq("id", p.id)); await cargarPerfiles(); render(); return; }
     if (t.dataset.mg != null) { const v = +t.dataset.mg; await must(sb.from("referencias").update({ margen: v, actualizado_por: S.session.user.id, actualizado_en: new Date().toISOString() }).eq("ref", S.ref.ref)); S.ref.margen = v; calc(S.ref); render(); toast("Porcentaje guardado en esta referencia."); return; }
     if (t.dataset.st) {
@@ -582,7 +592,7 @@ document.addEventListener("click", async (e) => {
       const v = !S.ref.cerrada; await must(sb.from("referencias").update({ cerrada: v, actualizado_por: S.session.user.id }).eq("ref", S.ref.ref)); S.ref.cerrada = v; calc(S.ref); render(); return;
     }
     const g = t.dataset.go;
-    if (g) { if (t.dataset.f) S.filtro = t.dataset.f; if (g === "usuarios") await cargarPerfiles(); go(g); return; }
+    if (g) { if (t.dataset.f) S.filtro = t.dataset.f; if (g === "usuarios") { S.claveMostrada = null; await cargarPerfiles(); } go(g); return; }
     const a = t.dataset.act; if (!a) return;
     if (a === "menu") { S.menu = !S.menu; render(); return; }
     if (a === "salir") { await sb.auth.signOut(); location.reload(); return; }
@@ -618,10 +628,16 @@ document.addEventListener("click", async (e) => {
       toast("Pago guardado."); await cargar(); go("cuenta"); return;
     }
     if (a === "invitar") {
-      const body = { nombre: $("#us-nom").value, email: $("#us-mail").value, rol: $("#us-rol").value };
+      const clave = claveTemporal();
+      const body = { accion: "crear", nombre: $("#us-nom").value.trim(), email: $("#us-mail").value.trim(), rol: $("#us-rol").value, password: clave };
       const { data, error } = await sb.functions.invoke("usuarios", { body });
       if (error || data?.error) { let msg = data?.error || error.message; try { msg = (await error.context.json()).error || msg; } catch (_) {} toast("No se pudo: " + msg); t.disabled = false; return; }
-      toast(data.reenviado ? "Ya existía: se le reenvió el correo." : "Invitación enviada."); await cargarPerfiles(); render(); return;
+      S.claveMostrada = { nombre: body.nombre || body.email, email: body.email.toLowerCase(), clave }; await cargarPerfiles(); render(); window.scrollTo(0, 0); return;
+    }
+    if (a === "copiar-clave") {
+      const c = S.claveMostrada; const txt = `Entre a https://solomoda.github.io/produccion/\nCorreo: ${c.email}\nContraseña temporal: ${c.clave}\nLa primera vez la app le pide escoger su propia contraseña.`;
+      try { await navigator.clipboard.writeText(txt); toast("Copiado. Péguelo en WhatsApp."); } catch (_) { toast("No se pudo copiar: escríbalo a mano."); }
+      t.disabled = false; return;
     }
   } catch (err) { console.error(err); toast("Error: " + (err.message || err)); t.disabled = false; }
 });
@@ -653,23 +669,22 @@ document.addEventListener("submit", async (e) => {
     }
     if (e.target.id === "f-pass") {
       if ($("#p1").value !== $("#p2").value) throw new Error("Las contraseñas no coinciden.");
-      const { error } = await sb.auth.updateUser({ password: $("#p1").value });
+      const { error } = await sb.auth.updateUser({ password: $("#p1").value, data: { cambiar_clave: false } });
       if (error) throw error;
-      S.recovery = false; history.replaceState(null, "", location.pathname); await iniciar();
+      S.recovery = false; S.claveCambiada = true; history.replaceState(null, "", location.pathname); await iniciar();
     }
   } catch (err) { toast(err.message); if (b) b.disabled = false; }
 });
-document.addEventListener("click", async (e) => {
+document.addEventListener("click", (e) => {
   if (e.target.id !== "olvide") return;
-  const correo = $("#u").value.trim(); if (!correo) { toast("Escriba su correo primero."); return; }
-  await sb.auth.resetPasswordForEmail(correo, { redirectTo: location.origin + location.pathname });
-  toast("Si el correo existe, le llegó un enlace para crear una contraseña nueva.");
+  toast("Pídale a Sebastián o a Jessica una contraseña temporal nueva (menú ⋯ → Usuarios).");
 });
 
 async function cargarPerfiles() { S.perfiles = await must(sb.from("perfiles").select("*").order("nombre")); }
 async function iniciar() {
   const { data } = await sb.auth.getSession(); S.session = data.session;
   if (!S.session) { render(); return; }
+  if (S.session.user?.user_metadata?.cambiar_clave && !S.claveCambiada) { S.recovery = true; render(); return; }
   try {
     S.perfil = (await must(sb.from("perfiles").select("*").eq("id", S.session.user.id).limit(1)))[0];
     if (!S.perfil || !S.perfil.activo) { $("#app").innerHTML = `<div class="login"><div class="card"><img src="logo.png" alt=""><p>Su usuario no tiene acceso. Pídale a un administrador que lo active.</p><button class="btn sec" data-act="salir">Salir</button></div></div>`; return; }
@@ -682,4 +697,5 @@ sb.auth.onAuthStateChange((ev, session) => {
   if (ev === "SIGNED_OUT") { S.session = null; S.perfil = null; render(); }
 });
 if (/type=(invite|recovery)/.test(location.hash)) S.recovery = true;
+if (/error_description=/.test(location.hash)) { history.replaceState(null, "", location.pathname); setTimeout(() => toast("Ese enlace ya no sirve. Pídale a un administrador una contraseña temporal."), 600); }
 iniciar();
